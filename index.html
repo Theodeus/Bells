@@ -1,0 +1,443 @@
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <style>
+            body {
+                font-family: Monospace;
+                background-color: #000000;
+                margin: 0px;
+                overflow: hidden;
+            }
+
+            #info {
+                color: #ffffff;
+
+                font-family: Monospace;
+                font-size: 13px;
+                text-align: center;
+                font-weight: bold;
+
+                position: absolute;
+                top: 0px; width: 100%;
+                padding: 5px;
+            }
+
+            a {
+
+                color: #0040ff;
+
+            }
+        </style>
+    </head>
+    <body>
+
+        <script type="text/javascript">
+          var _gaq = _gaq || [];
+          _gaq.push(['_setAccount', 'UA-86951-7']);
+          _gaq.push(['_trackPageview']);
+
+          (function() {
+            var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+            ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(ga);
+          })();
+        </script>
+
+        <script src="Three.js"></script>
+        <script src="FBOUtils.js"></script>
+        <script src="OrbitControls2.js"></script>
+
+        <script src="helvetiker_bold.typeface.js"></script>
+
+        <script id="texture_vertex_simulation_shader" type="x-shader/x-vertex">
+                
+            varying vec2 vUv;
+
+            void main() {
+
+                vUv = vec2(uv.x, 1.0 - uv.y);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+            }
+
+        </script>
+        <script id="texture_fragment_simulation_shader" type="x-shader/x-fragment">
+                
+            // simulation
+            varying vec2 vUv;
+            
+            uniform vec3 origin;
+            uniform sampler2D tPositions;
+            
+            uniform float timer;
+
+
+            float rand(vec2 co){
+                return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+            }
+        
+            void main() {
+
+
+                vec3 pos = texture2D( tPositions, vUv ).xyz;
+
+                if ( rand( vUv + timer ) > 0.99 ) {
+
+                    pos = origin;
+
+                    vec3 random = vec3( rand( vUv + 1.0 ) - 1.0, rand( vUv + 2.0 ) - 1.0, rand( vUv + 3.0 ) - 1.0 );
+                    pos += normalize( random ) * rand( vUv + 1.0 );
+
+                } else {
+
+                    float x = pos.x + timer;
+                    float y = pos.y;
+                    float z = pos.z;
+
+                    pos.x += sin( y * 3.3 ) * cos( z * 10.3 ) * 0.005;
+                    pos.y += sin( x * 3.5 ) * cos( z * 10.5 ) * 0.005;
+                    pos.z += sin( x * 3.7 ) * cos( y * 10.7 ) * 0.005;
+
+                }
+
+
+                // Write new position out
+                gl_FragColor = vec4(pos, 1.0);
+
+
+            }
+
+
+        </script>
+
+        <!-- zz85 - end simulations -->
+
+        <script id="vs-particles" type="x-shader/x-vertex">
+
+            uniform sampler2D map;
+
+            uniform float width;
+            uniform float height;
+
+            uniform float pointSize;
+
+            varying vec2 vUv;
+            varying vec4 vPosition;
+
+            void main() {
+
+                vUv = position.xy + vec2( 0.5 / width, 0.5 / height );
+
+                vec3 color = texture2D( map, vUv ).rgb * 200.0 - 100.0;
+
+                gl_PointSize = pointSize;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4( color, 1.0 );
+                // gl_Position = projectionMatrix * modelViewMatrix * vec4( position * 200.0, 1.0 );
+
+            }
+
+        </script>
+
+        <script id="fs-particles" type="x-shader/x-fragment">
+
+            uniform sampler2D map;
+
+            varying vec2 vUv;
+            varying vec4 vPosition;
+
+            void main() {
+
+                gl_FragColor = vec4( 0.25, 0.50, 1.0, 0.25 );
+
+            }
+
+        </script>
+
+        <script>
+        
+        
+            //MUSIC SETTINGS
+            var useDelay = false;
+            //time in seconds between beats
+            var beatInterval = 1.2;
+            //flag to start/stop playback, press space to toggle
+            var musicOn = true;
+            
+            var container;
+
+            var scene, camera, light, renderer;
+            var geometry, cube, mesh, material;
+
+            var data, texture, points;
+
+            var controls;
+
+            var fboParticles, rtTexturePos, rtTexturePos2, simulationShader;
+            
+            
+            var MIDIToFrequency = function(midiNote) {
+                return 8.1757989156 * Math.pow(2.0, midiNote / 12.0);
+            };
+            
+            var updateMusic = function(x, y){
+                
+                if(!musicOn){
+                    return;
+                }
+                
+                //calculate frequencies for the two oscillators
+                var firstPitch = Math.floor(y * 24)+64;
+                var octave = Math.floor(firstPitch / 12);
+                var note = firstPitch % 12;
+                firstPitch = coolNotes[note] + (octave * 12);
+                
+                var secondPitch = Math.floor(firstPitch + Math.random() * -12);
+                var secondOctave = Math.floor(secondPitch / 12);
+                var secondNote = secondPitch % 12;
+                //secondPitch = coolNotes[secondNote] + (secondOctave * 12);
+                secondPitch = firstPitch - 12;
+                
+                firstPitch = MIDIToFrequency(firstPitch);
+                secondPitch = MIDIToFrequency(secondPitch);
+
+                
+                //osc1
+                var oscOne = context.createOscillator();
+                var gainOne = context.createGainNode();
+                oscOne.connect(gainOne);
+                if(useDelay){
+                    gainOne.connect(delay);
+                } else {
+                    gainOne.connect(context.destination);
+                }
+                gainOne.gain.value = 0;
+                oscOne.frequency.value = firstPitch;
+                oscOne.type = 3;
+                gainOne.gain.cancelScheduledValues(nextBeat);
+                gainOne.gain.setTargetValueAtTime(x/3 + 0.1, nextBeat, 0.015);
+                gainOne.gain.cancelScheduledValues(nextBeat + beatInterval * 3);
+                gainOne.gain.setTargetValueAtTime(0, nextBeat + beatInterval * 3, 0.1);
+                oscOne.noteOn(nextBeat);
+                oscOne.noteOff(nextBeat + beatInterval * 5);
+                
+                //osc2
+                var oscTwo = context.createOscillator();
+                var gainTwo = context.createGainNode();
+                oscTwo.connect(gainTwo);
+                gainTwo.connect(context.destination);
+                gainTwo.gain.value = 0;
+                oscTwo.frequency.value = secondPitch;
+                oscTwo.type = 3;
+                
+                //gives us a kind of... variable time delay. :)
+                var offset = Math.random();
+                gainTwo.gain.cancelScheduledValues(nextBeat + offset);
+                gainTwo.gain.setTargetValueAtTime(x/4, nextBeat + offset, 0.015);
+                gainTwo.gain.cancelScheduledValues(nextBeat + offset + beatInterval * 3);
+                gainTwo.gain.setTargetValueAtTime(0, nextBeat + offset + beatInterval * 3, 0.1);
+                oscTwo.noteOn(nextBeat + offset);
+                oscTwo.noteOff(nextBeat + offset + beatInterval * 5);
+                
+                //calculate next beat
+                beatTime = nextBeat;
+                nextBeat = beatTime + beatInterval;
+            }
+            
+            var addWarning = function(){
+                var warning = document.createElement("p");
+                warning.innerHTML = 'You need a cool browser to play this. I mean, RELLY cool. Like, "haven´t been realeased to the masses yet"-cool. I´m talking about <a href="https://tools.google.com/dlpage/chromesxs">Chrome Canary</a>, of course.';
+                alert(warning);
+            };
+            
+            if(window.webkitAudioContext === undefined){
+                addWarning();
+                return;
+            }
+            var context = new webkitAudioContext();
+            if(!context.createOscillator){
+                addWarning();
+                return;
+            };
+
+            var beatTime = 0;
+            var nextBeat = beatTime + beatInterval;
+            
+            var coolNotes = [0,0,3,3,5,5,5,7,7,7,10,10];
+            var delay = context.createDelayNode();
+            delay.delayTime.value = beatInterval * 1.45;
+            delay.connect(context.destination);
+            
+            //kick starter, audio context needs a little push at times...
+            var kickstarter = context.createOscillator();
+            var kickGain = context.createGainNode();
+            kickstarter.connect(kickGain);
+            kickGain.connect(context.destination);
+            kickGain.gain.value = 0;
+            kickstarter.noteOn(0);
+            kickstarter.noteOff(0.3);
+            
+            window.onkeydown = function(e){
+                if(e.keyCode === 32){
+                    musicOn = !musicOn;
+                }
+            };
+
+            init();
+            animate();
+
+            function init() {
+
+                container = document.createElement( 'div' );
+                document.body.appendChild( container );
+
+                renderer = new THREE.WebGLRenderer();
+                renderer.setSize( window.innerWidth, window.innerHeight );
+                container.appendChild( renderer.domElement );
+
+                scene = new THREE.Scene();
+
+                camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 1000 );
+                scene.add( camera );
+
+                controls = new THREE.OrbitControls2( camera );
+                controls.radius = 600;
+                controls.speed = 3;
+
+                //
+
+                var width = 1024, height = 1024;
+                // var width = 64, height = 64;
+                // var width = 128, height = 128;
+
+                if ( ! renderer.context.getExtension( 'OES_texture_float' ) ) {
+
+                    alert( 'OES_texture_float is not :(' );
+
+                }
+
+                // Start Creation of DataTexture
+                // Could it be simplified with THREE.FBOUtils.createTextureFromData(textureWidth, textureWidth, data); ?
+
+                data = new Float32Array( width * height * 3 );
+
+                texture = new THREE.DataTexture( data, width, height, THREE.RGBFormat, THREE.FloatType );
+                texture.minFilter = THREE.NearestFilter;
+                texture.magFilter = THREE.NearestFilter;
+                texture.needsUpdate = true;
+
+                // zz85 - fbo init
+
+                rtTexturePos = new THREE.WebGLRenderTarget(width, height, {
+                    wrapS:THREE.RepeatWrapping,
+                    wrapT:THREE.RepeatWrapping,
+                    minFilter: THREE.NearestFilter,
+                    magFilter: THREE.NearestFilter,
+                    format: THREE.RGBFormat,
+                    type:THREE.FloatType,
+                    stencilBuffer: false
+                });
+
+                rtTexturePos2 = rtTexturePos.clone();
+
+                simulationShader = new THREE.ShaderMaterial({
+
+                    uniforms: {
+                        tPositions: { type: "t", value: 0, texture: texture },
+                        origin: { type: "v3", value: new THREE.Vector3() },
+                        timer: { type: "f", value: 0 }
+                    },
+
+                    vertexShader: document.getElementById('texture_vertex_simulation_shader').textContent,
+                    fragmentShader:  document.getElementById('texture_fragment_simulation_shader').textContent
+
+                });
+
+                fboParticles = new THREE.FBOUtils( width, renderer, simulationShader );
+                fboParticles.renderToTexture(rtTexturePos, rtTexturePos2);
+
+                fboParticles.in = rtTexturePos;
+                fboParticles.out = rtTexturePos2;
+
+
+                geometry = new THREE.Geometry();
+
+                for ( var i = 0, l = width * height; i < l; i ++ ) {
+
+                    var vertex = new THREE.Vector3();
+                    vertex.x = ( i % width ) / width ;
+                    vertex.y = Math.floor( i / width ) / height;
+                    geometry.vertices.push( vertex );
+
+                }
+
+                material = new THREE.ShaderMaterial( {
+
+                    uniforms: {
+
+                        "map": { type: "t", value: 0, texture: rtTexturePos },
+                        "width": { type: "f", value: width },
+                        "height": { type: "f", value: height },
+
+                        "pointSize": { type: "f", value: 1 }
+
+                    },
+                    vertexShader: document.getElementById( 'vs-particles' ).textContent,
+                    fragmentShader: document.getElementById( 'fs-particles' ).textContent,
+                    blending: THREE.AdditiveBlending,
+                    transparent: true,
+                    depthWrite: false,
+                    depthTest: false
+
+                } );
+
+                mesh = new THREE.ParticleSystem( geometry, material );
+                scene.add( mesh );
+
+                scene.add( new THREE.Mesh( new THREE.CubeGeometry( 500, 500, 500 ), new THREE.MeshBasicMaterial( { color: 0xffffff, wireframe: true, opacity: 0.15 } ) ) );
+
+            }
+
+            function animate() {
+
+                requestAnimationFrame( animate );
+                render();
+
+            }
+
+            var timer = 0;
+
+            function render() {
+
+                timer += 0.01;
+
+                simulationShader.uniforms.timer.value = timer;
+                simulationShader.uniforms.origin.value.x = Math.sin( timer * 2.3 ) * 0.5 + 0.5;
+                simulationShader.uniforms.origin.value.y = Math.cos( timer * 2.5 ) * 0.5 + 0.5;
+                simulationShader.uniforms.origin.value.z = Math.sin( timer * 2.7 ) * 0.5 + 0.5;
+                
+                if(context.currentTime + 0.03 > nextBeat){
+                    updateMusic(simulationShader.uniforms.origin.value.x, simulationShader.uniforms.origin.value.y);
+                }
+                
+                // swap
+                var tmp = fboParticles.in;
+                fboParticles.in = fboParticles.out;
+                fboParticles.out = tmp;
+
+                simulationShader.uniforms.tPositions.texture = fboParticles.in;
+                fboParticles.simulate(fboParticles.out);
+                material.uniforms.map.texture = fboParticles.out;
+
+                controls.update();
+
+                renderer.render( scene, camera );
+
+            }
+            
+        </script>
+    </body>
+</html>
